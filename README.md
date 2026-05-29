@@ -1,6 +1,6 @@
 # Nova
 
-AI-first programming language — simple as Go, more efficient than Python, safer like Rust.
+AI-first programming language — simple as Go, more efficient than Python, safer than Rust.
 
 Read the [Design Specs](CLAUDE.md) for the full language specification.
 
