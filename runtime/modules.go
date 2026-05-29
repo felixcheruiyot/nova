@@ -9,13 +9,61 @@ import (
 	"time"
 )
 
-func registerModules(env *Environment) {
-	env.Set("io", moduleIO())
-	env.Set("math", moduleMath())
-	env.Set("json", moduleJSON())
-	env.Set("time", moduleTime())
-	env.Set("fs", moduleFS())
+var builtinModules = map[string]func() *Value{
+	"io":   moduleIO,
+	"math": moduleMath,
+	"json": moduleJSON,
+	"time": moduleTime,
+	"fs":   moduleFS,
 }
+
+func registerModules(env *Environment) {
+	for name, fn := range builtinModules {
+		env.Set(name, fn())
+	}
+}
+
+// LoadModule returns a built-in module by name, or an error if unknown.
+// It also searches nova_modules/ in the current directory for user packages.
+func LoadModule(name string) (*Value, error) {
+	if fn, ok := builtinModules[name]; ok {
+		return fn(), nil
+	}
+	// User package: look for nova_modules/<name>.nv or nova_modules/<name>/init.nv
+	candidates := []string{
+		"nova_modules/" + name + ".nv",
+		"nova_modules/" + name + "/init.nv",
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return loadFileModule(path, name)
+		}
+	}
+	return nil, fmt.Errorf("unknown module %q", name)
+}
+
+// loadFileModule executes a .nv source file and exposes its globals as a module.
+func loadFileModule(path, name string) (*Value, error) {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("module %q: %w", name, err)
+	}
+	// FileRunner is set by main to parse+run a source string in a given env.
+	if FileRunner == nil {
+		return nil, fmt.Errorf("module %q: file module loader not initialised", name)
+	}
+	env := NewEnvironment()
+	RegisterBuiltins(env)
+	registerModules(env)
+	if err := FileRunner(string(src), env); err != nil {
+		return nil, fmt.Errorf("module %q: %w", name, err)
+	}
+	return &Value{Type: TypeModule, ModuleVal: env.vars}, nil
+}
+
+// FileRunner is set by main.go to parse+evaluate source without creating an
+// import cycle between runtime and the lexer/parser packages.
+var FileRunner func(src string, env *Environment) error
 
 func moduleIO() *Value {
 	m := map[string]*Value{

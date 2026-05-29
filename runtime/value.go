@@ -19,6 +19,7 @@ const (
 	TypeBuiltin
 	TypeRange
 	TypeModule
+	TypeVMFunc // compiled bytecode closure: ProtoVal=*vm.FuncProto, CapturedEnv=*Environment
 )
 
 type Value struct {
@@ -30,9 +31,11 @@ type Value struct {
 	MapVal   map[string]*Value
 	MapOrder []string
 	RangeStart, RangeEnd int
-	FuncVal  *Function
+	FuncVal    *Function
 	BuiltinVal func(args []*Value) (*Value, error)
 	ModuleVal  map[string]*Value
+	ProtoVal   interface{}  // *vm.FuncProto when Type == TypeVMFunc (interface{} breaks import cycle)
+	CapturedEnv *Environment // captured scope when Type == TypeVMFunc
 }
 
 type Function struct {
@@ -109,6 +112,12 @@ func (v *Value) String() string {
 		return fmt.Sprintf("%d..%d", v.RangeStart, v.RangeEnd)
 	case TypeModule:
 		return "<module>"
+	case TypeVMFunc:
+		name := "anonymous"
+		if p, ok := v.ProtoVal.(interface{ GetName() string }); ok {
+			name = p.GetName()
+		}
+		return fmt.Sprintf("<func %s>", name)
 	}
 	return "?"
 }

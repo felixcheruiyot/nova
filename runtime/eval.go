@@ -17,6 +17,11 @@ func NewInterpreter() *Interpreter {
 	return &Interpreter{env: env}
 }
 
+// NewInterpreterWithEnv creates an interpreter that runs in an existing environment.
+func NewInterpreterWithEnv(env *Environment) *Interpreter {
+	return &Interpreter{env: env}
+}
+
 func (interp *Interpreter) Run(prog *ast.Program) error {
 	_, err := interp.execStmts(prog.Statements, interp.env)
 	return err
