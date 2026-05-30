@@ -66,12 +66,22 @@ const (
 	OP_POP_HANDLER  // pop catch handler after try body succeeds
 	OP_LOAD_EXCEPT  // [u16] store current exception in names[u16]; used at start of catch
 
-	// Concurrency (lightweight goroutine-based)
-	OP_SPAWN // pops a CallExpression closure (argc already baked in); spawns goroutine
-	OP_WAIT  // waits for all spawned goroutines in the current frame
+	// Concurrency (goroutine-based)
+	// OP_SPAWN [argc16]: pops argc args then callee, spawns a real goroutine, pushes null
+	OP_SPAWN
+	// OP_WAIT: blocks until all goroutines spawned by OP_SPAWN in this frame complete
+	OP_WAIT
 
-	OP_TOSTR // convert top-of-stack to string (for interpolation)
+	OP_TOSTR  // convert top-of-stack to string (for interpolation)
 	OP_INTERP // [u16] pop env-resolved template from constants[u16]; push interpolated string
+
+	// HTTP server DSL
+	// OP_START_SERVER [port_u16] [num_routes_u16]:
+	//   pops num_routes route descriptors (each is method+path+handler triple on the stack)
+	//   starts a blocking HTTP server on the given port
+	OP_START_SERVER
+	// OP_BUILD_ROUTE: pops handler (VMFunc), path (string), method (string) → pushes route value
+	OP_BUILD_ROUTE
 )
 
 func (op OpCode) String() string {

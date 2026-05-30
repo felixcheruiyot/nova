@@ -54,6 +54,19 @@ func (p *Parser) skipNewlines() {
 	}
 }
 
+// skipBraceWS skips NEWLINE, INDENT, and DEDENT tokens that appear inside
+// brace-delimited blocks where indentation has no semantic meaning.
+func (p *Parser) skipBraceWS() {
+	for p.pos < len(p.tokens) {
+		t := p.tokens[p.pos].Type
+		if t == lexer.NEWLINE || t == lexer.INDENT || t == lexer.DEDENT {
+			p.pos++
+		} else {
+			break
+		}
+	}
+}
+
 func (p *Parser) expect(t lexer.TokenType) (lexer.Token, error) {
 	tok := p.cur()
 	if tok.Type != t {
@@ -109,6 +122,8 @@ func (p *Parser) parseStatement() (ast.Statement, error) {
 		return p.parseImport()
 	case lexer.FROM:
 		return p.parseFromImport()
+	case lexer.SERVER:
+		return p.parseServer()
 	case lexer.NEWLINE, lexer.DEDENT:
 		p.advance()
 		return nil, nil
@@ -168,10 +183,10 @@ func (p *Parser) parseBlock() ([]ast.Statement, error) {
 	p.skipNewlines()
 	var stmts []ast.Statement
 
-	// Brace-delimited block
+	// Brace-delimited block — INDENT/DEDENT from the lexer are ignored here.
 	if p.cur().Type == lexer.LBRACE {
 		p.advance()
-		p.skipNewlines()
+		p.skipBraceWS()
 		for p.cur().Type != lexer.RBRACE && p.cur().Type != lexer.EOF {
 			stmt, err := p.parseStatement()
 			if err != nil {
@@ -180,7 +195,7 @@ func (p *Parser) parseBlock() ([]ast.Statement, error) {
 			if stmt != nil {
 				stmts = append(stmts, stmt)
 			}
-			p.skipNewlines()
+			p.skipBraceWS()
 		}
 		if _, err := p.expect(lexer.RBRACE); err != nil {
 			return nil, err
@@ -621,7 +636,7 @@ func (p *Parser) parseMapLiteral() (*ast.MapLiteral, error) {
 	line := p.cur().Line
 	p.advance() // {
 	m := &ast.MapLiteral{Line: line, Pairs: make(map[ast.Expression]ast.Expression)}
-	p.skipNewlines()
+	p.skipBraceWS()
 	for p.cur().Type != lexer.RBRACE && p.cur().Type != lexer.EOF {
 		key, err := p.parseExpression(PREC_LOWEST)
 		if err != nil {
@@ -636,14 +651,85 @@ func (p *Parser) parseMapLiteral() (*ast.MapLiteral, error) {
 		}
 		m.Pairs[key] = val
 		m.Order = append(m.Order, key)
-		p.skipNewlines()
+		p.skipBraceWS()
 		if p.cur().Type == lexer.COMMA {
 			p.advance()
-			p.skipNewlines()
+			p.skipBraceWS()
 		}
 	}
 	if _, err := p.expect(lexer.RBRACE); err != nil {
 		return nil, err
 	}
 	return m, nil
+}
+
+// ── HTTP server DSL ───────────────────────────────────────────────────────────
+
+func (p *Parser) parseServer() (*ast.ServerStatement, error) {
+	line := p.cur().Line
+	p.advance() // consume 'server'
+
+	port := 8080
+	// Optional port: server :3000 { ... }
+	if p.cur().Type == lexer.COLON {
+		p.advance()
+		portTok, err := p.expect(lexer.NUMBER)
+		if err != nil {
+			return nil, err
+		}
+		n := 0
+		for _, ch := range portTok.Literal {
+			if ch >= '0' && ch <= '9' {
+				n = n*10 + int(ch-'0')
+			}
+		}
+		port = n
+	}
+
+	p.skipNewlines()
+	if _, err := p.expect(lexer.LBRACE); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	var routes []*ast.RouteHandler
+	for p.cur().Type != lexer.RBRACE && p.cur().Type != lexer.EOF {
+		// Skip INDENT/DEDENT/NEWLINE inside the brace-delimited server block
+		if t := p.cur().Type; t == lexer.NEWLINE || t == lexer.INDENT || t == lexer.DEDENT {
+			p.advance()
+			continue
+		}
+		route, err := p.parseRoute()
+		if err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
+	}
+	if _, err := p.expect(lexer.RBRACE); err != nil {
+		return nil, err
+	}
+	return &ast.ServerStatement{Line: line, Port: port, Routes: routes}, nil
+}
+
+func (p *Parser) parseRoute() (*ast.RouteHandler, error) {
+	tok := p.cur()
+	switch tok.Type {
+	case lexer.GET, lexer.POST, lexer.PUT, lexer.DELETE:
+	default:
+		return nil, fmt.Errorf("line %d: expected HTTP method (get, post, put, delete), got %s", tok.Line, tok.Type)
+	}
+	method := string(tok.Type) // "get", "post", etc.
+	p.advance()
+
+	pathTok, err := p.expect(lexer.STRING)
+	if err != nil {
+		return nil, err
+	}
+
+	// Route bodies always use brace syntax (not indentation)
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.RouteHandler{Line: tok.Line, Method: method, Path: pathTok.Literal, Body: body}, nil
 }

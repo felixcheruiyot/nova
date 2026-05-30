@@ -1,0 +1,58 @@
+# Variables and arithmetic
+age = 5 * 10
+if age >= 18:
+    print("Adult")
+else:
+    print("Minor")
+
+# Maps and string interpolation
+user = {"name": "Felix", "age": 12}
+name = user["name"]
+print("Name: {name}")
+
+# Typed variable
+amount: float = 300.0
+print(amount)
+
+# Functions
+func greet(name):
+    return "Hello, {name}!"
+
+print(greet("Felix"))
+
+# Loops with ranges
+for i in 1..5:
+    print(i)
+
+# Built-in math module
+import math
+print(math.sqrt(16))
+print(math.pi)
+
+# Selective import
+from json import stringify
+data = {"score": 42+1, "passed": true}
+print(stringify(data))
+
+# Time module
+import time
+stamp = time.now()
+print("Timestamp: {stamp}")
+
+# AI module (requires ANTHROPIC_API_KEY env var)
+# import ai
+# summary = ai.summarize("Nova is a modern programming language.")
+# print(summary)
+
+# Error handling
+try:
+    result = 10 / 0
+catch err:
+    print("Caught error: {err}")
+
+# HTTP server (blocks — uncomment to run a server)
+# server {
+#     get "/hello" {
+#         return {"message": "Hello from Nova!"}
+#     }
+# }

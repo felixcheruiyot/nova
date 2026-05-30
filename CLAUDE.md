@@ -342,16 +342,137 @@ Implementation should evaluate expressions inside braces.
 
 # Standard Library
 
-Initial built-in modules:
+Built-in modules available at runtime (no install required):
 
 ```text
-io
-math
-http
-json
-time
-fs
-ai
+io      — print, read, write
+math    — sqrt, pow, abs, floor, ceil, round, log, sin, cos, pi, e, inf, max, min
+json    — stringify, parse
+time    — now, sleep, format
+fs      — read, write, exists, lines
+ai      — prompt, summarize, translate, classify, extract
+```
+
+Note: `http` is not an importable module. HTTP servers are declared with the built-in `server { }` DSL.
+
+---
+
+# Module System
+
+## Importing a built-in module
+
+```nova
+import math
+print(math.sqrt(16))
+print(math.pi)
+```
+
+After `import math`, the module is bound to the name `math` in the current scope.
+
+## Selective import
+
+```nova
+from json import stringify, parse
+
+data = {"name": "Alex"}
+print(stringify(data))
+```
+
+Named exports are bound directly into scope — no `json.` prefix needed.
+
+## User-defined modules
+
+Place `.nv` files inside a `nova_modules/` directory next to your script.
+The file's top-level variables and functions become the module's exports.
+
+```text
+nova_modules/
+  utils.nv
+```
+
+```nova
+# nova_modules/utils.nv
+func double(x):
+    return x * 2
+```
+
+```nova
+# main.nv
+import utils
+print(utils.double(5))   # 10
+
+from utils import double
+print(double(7))         # 14
+```
+
+## Module reference
+
+### io
+
+```nova
+import io
+io.print("hello")
+line = io.read()
+io.write("no newline")
+```
+
+### math
+
+```nova
+import math
+math.sqrt(9)        # 3
+math.pow(2, 8)      # 256
+math.abs(-5)        # 5
+math.floor(3.9)     # 3
+math.ceil(3.1)      # 4
+math.round(3.5)     # 4
+math.max(1, 2)      # 2
+math.min(1, 2)      # 1
+math.log(math.e)    # 1
+math.sin(0)         # 0
+math.cos(0)         # 1
+math.pi             # 3.14159…
+math.e              # 2.71828…
+```
+
+### json
+
+```nova
+import json
+s = json.stringify({"a": 1})   # '{"a":1}'
+v = json.parse('{"a":1}')      # map
+```
+
+### time
+
+```nova
+import time
+ms = time.now()              # Unix milliseconds
+time.sleep(500)              # sleep 500 ms
+s  = time.format("15:04:05") # formatted current time
+```
+
+### fs
+
+```nova
+import fs
+text  = fs.read("data.txt")
+fs.write("out.txt", "hello")
+ok    = fs.exists("data.txt")
+lines = fs.lines("data.txt")   # list of strings
+```
+
+### ai
+
+Requires the `ANTHROPIC_API_KEY` environment variable.
+
+```nova
+import ai
+reply     = ai.prompt("What is Nova?")
+summary   = ai.summarize("Long text here…")
+fr        = ai.translate("Hello", "French")
+category  = ai.classify("I love this!", ["positive", "negative"])
+fields    = ai.extract("John is 30 years old", "name, age")
 ```
 
 ---

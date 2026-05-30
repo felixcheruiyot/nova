@@ -2,8 +2,11 @@ package vm
 
 import (
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"nova/runtime"
+	"os"
 	"strings"
 	"sync"
 )
@@ -424,12 +427,23 @@ func (vm *VM) execFrame(proto *FuncProto, env *runtime.Environment, args []*runt
 
 		// ── Concurrency ───────────────────────────────────────────────────
 		case OP_SPAWN:
-			result := f.pop() // result already computed (eager); store for future async upgrade
-			_ = result
-			if f.wg == nil {
-				var wg sync.WaitGroup
-				f.wg = &wg
+			argc := int(f.readU16())
+			args := make([]*runtime.Value, argc)
+			for i := argc - 1; i >= 0; i-- {
+				args[i] = f.pop()
 			}
+			callee := f.pop()
+			if f.wg == nil {
+				f.wg = new(sync.WaitGroup)
+			}
+			f.wg.Add(1)
+			capturedWG := f.wg
+			go func() {
+				defer capturedWG.Done()
+				if _, err := vm.callValue(callee, args, nil); err != nil {
+					fmt.Fprintf(os.Stderr, "task error: %v\n", err)
+				}
+			}()
 
 		case OP_WAIT:
 			if f.wg != nil {
@@ -443,6 +457,28 @@ func (vm *VM) execFrame(proto *FuncProto, env *runtime.Environment, args []*runt
 		case OP_INTERP:
 			tmpl := f.const_(f.readU16()).StrVal
 			f.push(runtime.StringVal(interpVM(tmpl, env)))
+
+		// ── HTTP server DSL ───────────────────────────────────────────────
+		case OP_BUILD_ROUTE:
+			handler := f.pop()
+			path := f.pop()
+			method := f.pop()
+			// Pack as a 3-element list: [method, path, handler]
+			f.push(&runtime.Value{
+				Type:    runtime.TypeList,
+				ListVal: []*runtime.Value{method, path, handler},
+			})
+
+		case OP_START_SERVER:
+			port := int(f.readU16())
+			numRoutes := int(f.readU16())
+			routes := make([]*runtime.Value, numRoutes)
+			for i := numRoutes - 1; i >= 0; i-- {
+				routes[i] = f.pop()
+			}
+			if err := vm.startServer(port, routes, env); err != nil {
+				return nil, vm.runtimeErr(f, err.Error())
+			}
 
 		default:
 			return nil, fmt.Errorf("vm: unknown opcode %d", op)
@@ -488,9 +524,10 @@ func (vm *VM) handleException(f *frame, msg string, env *runtime.Environment) *r
 }
 
 func (vm *VM) runtimeErr(f *frame, msg string) error {
-	line := f.chunk.LineFor(f.ip - 1)
-	if line > 0 {
-		return &vmError{fmt.Sprintf("line %d: %s", line, msg)}
+	if f != nil {
+		if line := f.chunk.LineFor(f.ip - 1); line > 0 {
+			return &vmError{fmt.Sprintf("line %d: %s", line, msg)}
+		}
 	}
 	return &vmError{msg}
 }
@@ -633,6 +670,64 @@ func typeName(v *runtime.Value) string {
 		return "range"
 	}
 	return "unknown"
+}
+
+// startServer starts a blocking net/http server using the VM to dispatch handlers.
+func (vm *VM) startServer(port int, routes []*runtime.Value, env *runtime.Environment) error {
+	mux := http.NewServeMux()
+
+	for _, route := range routes {
+		if route.Type != runtime.TypeList || len(route.ListVal) != 3 {
+			continue
+		}
+		method := route.ListVal[0].StrVal
+		path := route.ListVal[1].StrVal
+		handler := route.ListVal[2]
+		m, p, h := method, path, handler // capture
+
+		mux.HandleFunc(p, func(w http.ResponseWriter, req *http.Request) {
+			if !strings.EqualFold(req.Method, m) && m != "any" {
+				http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			reqVal := buildVMRequest(req)
+			result, err := vm.callValue(h, []*runtime.Value{reqVal}, nil)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			runtime.WriteHTTPResponse(w, result)
+		})
+	}
+
+	addr := fmt.Sprintf(":%d", port)
+	fmt.Printf("Nova server listening on http://localhost%s\n", addr)
+	return http.ListenAndServe(addr, mux)
+}
+
+func buildVMRequest(req *http.Request) *runtime.Value {
+	qmap := &runtime.Value{Type: runtime.TypeMap, MapVal: make(map[string]*runtime.Value)}
+	for k, vs := range req.URL.Query() {
+		qmap.MapVal[k] = runtime.StringVal(strings.Join(vs, ","))
+		qmap.MapOrder = append(qmap.MapOrder, k)
+	}
+	body := ""
+	if req.Body != nil {
+		defer req.Body.Close()
+		b, _ := io.ReadAll(req.Body)
+		body = string(b)
+	}
+	m := map[string]*runtime.Value{
+		"method": runtime.StringVal(req.Method),
+		"path":   runtime.StringVal(req.URL.Path),
+		"query":  qmap,
+		"body":   runtime.StringVal(body),
+	}
+	return &runtime.Value{
+		Type:     runtime.TypeMap,
+		MapVal:   m,
+		MapOrder: []string{"method", "path", "query", "body"},
+	}
 }
 
 // interpVM resolves {varname} patterns in a template string using the environment.

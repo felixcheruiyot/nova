@@ -76,6 +76,8 @@ func (c *Compiler) compileStmt(stmt ast.Statement) error {
 		c.chunk.Emit(OP_WAIT, s.Line)
 	case *ast.ImportStatement:
 		return c.compileImport(s)
+	case *ast.ServerStatement:
+		return c.compileServer(s)
 	}
 	return nil
 }
@@ -267,13 +269,49 @@ func (c *Compiler) compileTryCatch(s *ast.TryCatchStatement) error {
 }
 
 func (c *Compiler) compileTask(s *ast.TaskStatement) error {
-	if err := c.compileExpr(s.Call); err != nil {
+	call, ok := s.Call.(*ast.CallExpression)
+	if !ok {
+		return fmt.Errorf("line %d: task requires a function call", s.Line)
+	}
+	// Push callee and arguments WITHOUT calling — OP_SPAWN does the goroutine spawn.
+	if err := c.compileExpr(call.Callee); err != nil {
 		return err
 	}
-	// The call result is already on the stack; OP_SPAWN wraps it as a goroutine.
-	// For now tasks run eagerly since the call is already evaluated.
-	// A proper async implementation would defer execution; this matches Phase 2 scope.
-	c.chunk.Emit(OP_SPAWN, s.Line)
+	for _, arg := range call.Arguments {
+		if err := c.compileExpr(arg); err != nil {
+			return err
+		}
+	}
+	c.chunk.EmitU16(OP_SPAWN, uint16(len(call.Arguments)), s.Line)
+	return nil
+}
+
+func (c *Compiler) compileServer(s *ast.ServerStatement) error {
+	for _, route := range s.Routes {
+		// Push method string
+		mIdx := c.chunk.AddConst(runtime.StringVal(route.Method))
+		c.chunk.EmitU16(OP_CONSTANT, mIdx, route.Line)
+		// Push path string
+		pIdx := c.chunk.AddConst(runtime.StringVal(route.Path))
+		c.chunk.EmitU16(OP_CONSTANT, pIdx, route.Line)
+		// Compile handler body as a zero-param function (request available via env)
+		inner := newCompiler("handler:"+route.Method+":"+route.Path, []string{"request"})
+		for _, stmt := range route.Body {
+			if err := inner.compileStmt(stmt); err != nil {
+				return err
+			}
+		}
+		inner.chunk.Emit(OP_NULL, route.Line)
+		inner.chunk.Emit(OP_RETURN, route.Line)
+		protoVal := &runtime.Value{Type: runtime.TypeNull, ProtoVal: inner.proto}
+		hIdx := c.chunk.AddConst(protoVal)
+		c.chunk.EmitU16(OP_MAKE_FUNC, hIdx, route.Line)
+		// OP_BUILD_ROUTE: pops handler, path, method → pushes route triple (stored as list)
+		c.chunk.Emit(OP_BUILD_ROUTE, route.Line)
+	}
+	c.chunk.EmitU16(OP_START_SERVER, uint16(s.Port), s.Line)
+	c.chunk.writeByte(byte(len(s.Routes)>>8), s.Line)
+	c.chunk.writeByte(byte(len(s.Routes)), s.Line)
 	return nil
 }
 

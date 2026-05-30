@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"nova/ast"
 	"strings"
+	"sync"
 )
 
 type Interpreter struct {
-	env *Environment
+	env   *Environment
+	tasks sync.WaitGroup
 }
 
 func NewInterpreter() *Interpreter {
@@ -92,15 +94,18 @@ func (interp *Interpreter) execStmt(stmt ast.Statement, env *Environment) (*Valu
 		return interp.execTryCatch(s, env)
 
 	case *ast.TaskStatement:
-		// Synchronous execution of task (async is Phase 3)
-		_, err := interp.evalExpr(s.Call, env)
-		return nil, err
+		return interp.execTask(s, env)
 
 	case *ast.WaitStatement:
-		return nil, nil // no-op in sync mode
+		interp.tasks.Wait()
+		return nil, nil
 
 	case *ast.ImportStatement:
 		return interp.execImport(s, env)
+
+	case *ast.ServerStatement:
+		err := ExecuteServer(s, env, interp)
+		return nil, err
 
 	case nil:
 		return nil, nil
@@ -194,6 +199,43 @@ func (interp *Interpreter) execWhile(s *ast.WhileStatement, env *Environment) (*
 		}
 	}
 	return nil, nil
+}
+
+func (interp *Interpreter) execTask(s *ast.TaskStatement, env *Environment) (*Value, error) {
+	call, ok := s.Call.(*ast.CallExpression)
+	if !ok {
+		return nil, fmt.Errorf("line %d: task requires a function call", s.Line)
+	}
+	callee, err := interp.evalExpr(call.Callee, env)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]*Value, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		v, err := interp.evalExpr(arg, env)
+		if err != nil {
+			return nil, err
+		}
+		args[i] = v
+	}
+	interp.tasks.Add(1)
+	go func() {
+		defer interp.tasks.Done()
+		if _, err := interp.callValue(callee, args); err != nil {
+			fmt.Printf("task error: %v\n", err)
+		}
+	}()
+	return nil, nil
+}
+
+func (interp *Interpreter) callValue(callee *Value, args []*Value) (*Value, error) {
+	switch callee.Type {
+	case TypeBuiltin:
+		return callee.BuiltinVal(args)
+	case TypeFunction:
+		return interp.callFunction(callee.FuncVal, args, 0)
+	}
+	return nil, fmt.Errorf("%s is not callable", callee.String())
 }
 
 func (interp *Interpreter) execTryCatch(s *ast.TryCatchStatement, env *Environment) (*Value, error) {

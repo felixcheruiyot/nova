@@ -239,3 +239,24 @@ type IndexExpression struct {
 
 func (i *IndexExpression) nodeType() string { return "IndexExpression" }
 func (i *IndexExpression) exprNode()        {}
+
+// ── HTTP server DSL ─────────────────────────────────────────────
+
+type ServerStatement struct {
+	Line   int
+	Port   int // default 8080
+	Routes []*RouteHandler
+}
+
+func (s *ServerStatement) nodeType() string { return "ServerStatement" }
+func (s *ServerStatement) stmtNode()        {}
+
+type RouteHandler struct {
+	Line   int
+	Method string // "get" | "post" | "put" | "delete"
+	Path   string
+	Body   []Statement
+}
+
+func (r *RouteHandler) nodeType() string { return "RouteHandler" }
+func (r *RouteHandler) stmtNode()        {}

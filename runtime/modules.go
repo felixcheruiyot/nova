@@ -15,6 +15,7 @@ var builtinModules = map[string]func() *Value{
 	"json": moduleJSON,
 	"time": moduleTime,
 	"fs":   moduleFS,
+	"ai":   moduleAI,
 }
 
 func registerModules(env *Environment) {

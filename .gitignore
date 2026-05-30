@@ -1,2 +1,4 @@
 *.swp
 .claude
+*.nvc
+nova_modules/
